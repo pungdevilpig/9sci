@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sky Math AR: ทะยานสู่ท้องฟ้าคณิตศาสตร์</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+    <style>
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+            background-color: #87CEEB;
+            background-image: url('https://images.unsplash.com/photo-1601297183305-6df142704ea2?q=80&w=1920&auto=format&fit=crop');
+            background-size: cover; background-position: center;
+            display: flex; justify-content: center; align-items: center;
+            font-family: 'Kanit', sans-serif;
+        }
+
+        .game-wrapper {
+            position: relative; width: 90vw; height: 85vh; max-width: 1280px; max-height: 720px;
+            border: 8px solid #fff; border-radius: 24px;
+            box-shadow: 0 0 40px rgba(0,0,0,0.5), inset 0 0 20px rgba(0,0,0,0.3);
+            background-color: #87CEEB; overflow: hidden;
+        }
+
+        #webcam {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            object-fit: cover; transform: scaleX(-1); z-index: 1; opacity: 0.85;
+        }
+
+        #gameCanvas {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2;
+        }
+
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 3;
+            pointer-events: none; display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+        }
+
+        .ar-interact { pointer-events: auto; }
+        
+        .ar-key {
+            background: rgba(255, 255, 255, 0.6); border: 4px solid rgba(255,255,255,0.9);
+            border-radius: 20px; display: flex; justify-content: center; align-items: center;
+            transition: all 0.15s; user-select: none; text-shadow: 0 0 10px rgba(255,255,255,0.8);
+            cursor: pointer;
+        }
+        .ar-key.active { background: #f97316; border-color: #fff; transform: scale(1.15); box-shadow: 0 0 25px #f97316; z-index: 10;}
+        .ar-key.pressed { background: #ffffff; transform: scale(0.9); box-shadow: 0 0 40px #ffffff; }
+
+        .cat-btn {
+            background: rgba(255, 255, 255, 0.9); border: 4px solid #3b82f6;
+            color: #1e3a8a; font-weight: bold; font-size: 1.5rem;
+            border-radius: 20px; padding: 15px 30px; margin: 10px;
+            transition: all 0.2s; box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+        }
+        .cat-btn.active { transform: scale(1.05); border-color: #f59e0b; box-shadow: 0 0 30px #f59e0b; }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(255,255,255,0.3); border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #3b82f6; border-radius: 10px; }
+    </style>
+</head>
+<body>
+
+    <div class="game-wrapper" id="gameWrapper">
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="gameCanvas"></canvas>
+
+        <div id="ui-layer">
+            <div id="startScreen" class="bg-white/80 p-10 rounded-3xl text-center backdrop-blur-md border border-white shadow-2xl">
+                <h1 class="text-6xl font-bold text-blue-500 mb-4 drop-shadow-md">Sky Math <span class="text-yellow-500">AR</span></h1>
+                <p class="text-xl text-gray-700 mb-6 font-bold">ทะยานสู่ท้องฟ้าคณิตศาสตร์ 5 หมวดหมู่</p>
+                <button id="startBtn" class="bg-gradient-to-r from-blue-400 to-blue-600 text-white font-bold py-4 px-10 rounded-full text-2xl shadow-lg pointer-events-auto hover:scale-110 transition-transform border-4 border-white">
+                    เปิดระบบกล้อง
+                </button>
+                <p id="loadingText" class="text-blue-600 mt-4 hidden animate-pulse text-lg font-bold">กำลังโหลดระบบเรดาร์ AI...</p>
+            </div>
+
+            <div id="nameInputScreen" class="hidden flex flex-col items-center justify-center w-full h-full bg-transparent px-2">
+                <h2 class="text-4xl md:text-5xl font-bold text-white mb-2 leading-normal drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)]">เลือกอวตารนักบิน</h2>
+                <p class="text-white mb-8 font-bold animate-pulse text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]">เล็งเป้าหมายแล้ว "จีบนิ้ว" เพื่อเลือกสัญลักษณ์ประจำตัว</p>
+                <div id="keyboard" class="grid grid-cols-5 gap-4 md:gap-6 w-[90%] max-w-4xl ar-interact"></div>
+            </div>
+
+            <div id="categoryScreen" class="hidden flex flex-col items-center justify-center w-full h-full bg-transparent px-2">
+                <h2 class="text-4xl md:text-5xl font-bold text-white mb-6 drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)]">เลือกเส้นทางการบิน (หมวดหมู่)</h2>
+                <p class="text-white mb-8 font-bold animate-pulse text-xl drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]">จ่อเป้าค้างไว้ที่หมวดหมู่ที่ต้องการ</p>
+                <div class="grid grid-cols-2 gap-4 w-4/5 max-w-4xl">
+                    <div class="cat-btn ar-interact text-center" data-cat="1">1. เลขยกกำลัง</div>
+                    <div class="cat-btn ar-interact text-center" data-cat="2">2. ทศนิยมและเศษส่วน</div>
+                    <div class="cat-btn ar-interact text-center" data-cat="3">3. เรขาคณิต 2D / 3D</div>
+                    <div class="cat-btn ar-interact text-center" data-cat="4">4. สมการเชิงเส้นตัวแปรเดียว</div>
+                    <div class="cat-btn ar-interact text-center col-span-2 mx-auto w-1/2" data-cat="5">5. อัตราส่วน สัดส่วน ร้อยละ</div>
+                </div>
+            </div>
+
+            <div id="hud" class="hidden absolute top-0 left-0 w-full h-full">
+                <div class="absolute top-6 left-6 bg-white/80 px-6 py-2 rounded-xl border-4 border-blue-400 shadow-lg">
+                    <span class="text-blue-800 font-bold text-2xl"><span id="hudName" class="text-blue-500">Pilot</span> | คะแนน: <span id="scoreValue" class="text-yellow-500">0</span></span>
+                </div>
+                <div class="absolute top-6 right-6 bg-white/80 px-6 py-2 rounded-xl border-4 border-blue-400 shadow-lg">
+                    <span class="text-blue-800 font-bold text-2xl">เวลา: <span id="timerValue" class="text-red-500">2:00</span></span>
+                </div>
+                <div class="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-white/80 px-6 py-2 rounded-full border-4 border-yellow-400 shadow-lg">
+                    <span id="currentCatDisplay" class="text-blue-800 font-bold text-xl">หมวดหมู่</span>
+                </div>
+            </div>
+
+            <div id="endScreen" class="hidden bg-white/90 p-8 rounded-3xl text-center backdrop-blur-lg border-4 border-blue-400 shadow-2xl w-4/5 max-w-5xl max-h-[85vh] flex flex-col items-center">
+                <h2 class="text-5xl font-bold text-blue-600 mb-2">แลนดิ้งเรียบร้อย!</h2>
+                <div id="resultStatus" class="text-4xl font-bold my-4"></div>
+                
+                <div class="flex justify-between w-full gap-8 h-full min-h-0">
+                    <div class="flex-1 bg-blue-50 p-6 rounded-2xl border-2 border-blue-200 flex flex-col justify-center shadow-inner">
+                        <h3 class="text-2xl text-blue-800 font-bold mb-4">ผลงานนักบิน <span id="finalName" class="text-blue-500"></span></h3>
+                        <p class="text-xl text-gray-700 mb-2">คะแนน: <span id="finalScore" class="text-yellow-500 font-bold text-4xl">0</span></p>
+                        <p class="text-xl text-gray-700 mb-4">ความแม่นยำ: <span id="accuracyValue" class="text-green-500 font-bold text-3xl">0%</span></p>
+                        <div id="arRestartBtn" class="ar-interact mt-auto bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-bold py-3 px-8 rounded-full text-xl shadow-lg border-4 border-white transition-transform">
+                            จ่อค้างเพื่อ กลับไปเลือกหมวดหมู่
+                        </div>
+                    </div>
+
+                    <div class="flex-1 bg-blue-50 p-4 rounded-2xl border-2 border-blue-200 flex flex-col shadow-inner">
+                        <h3 class="text-2xl text-yellow-600 font-bold mb-2">🏆 Top 10 ประจำหมวด</h3>
+                        <p id="endCatTitle" class="text-sm text-blue-600 font-bold mb-4"></p>
+                        <div id="leaderboardList" class="flex-1 overflow-y-auto custom-scrollbar ar-interact text-left pr-2 space-y-2 h-[250px]">
+                            <p class="text-gray-500 text-center mt-4">กำลังโหลดข้อมูลเรดาร์...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // 1. ส่วนตั้งค่า FIREBASE
+        // ==========================================
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT_ID.appspot.com",
+            messagingSenderId: "YOUR_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+        
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const database = firebase.database();
+
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('gameCanvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const gameWrapper = document.getElementById('gameWrapper');
+        
+        let gameState = 'START'; 
+        let width, height;
+        let playerName = ""; let score = 0; let correctCount = 0; let totalAttempted = 0;
+        let currentQuestion = ""; let correctAnswer = 0;
+        let selectedCategory = 1; 
+        const categoryNames = [ "เลขยกกำลัง", "ทศนิยมและเศษส่วน", "รูปเรขาคณิต 2D/3D", "สมการเชิงเส้นตัวแปรเดียว", "อัตราส่วน สัดส่วน และร้อยละ" ];
+        
+        let timeLeft = 120; let timerInterval = null;
+        let audioCtx;
+
+        let cursorX = -100; let cursorY = -100;
+        let targetCursorX = -100; let targetCursorY = -100;
+        const cursorRadius = 50; 
+        
+        let windowLandmarks = null; 
+
+        let isPinching = false; let wasPinching = false; let pinchCooldown = 0;
+        let hoverTarget = null; let hoverFrames = 0; const requiredHoverFrames = 30; 
+        
+        let navCooldown = 0; 
+
+        let clouds = [];
+        const cloudColors = ['#ff66cc', '#4ADE80', '#60A5FA', '#FACC15', '#A855F7']; 
+
+        function resizeCanvas() {
+            width = gameWrapper.clientWidth; height = gameWrapper.clientHeight;
+            canvasElement.width = width; canvasElement.height = height;
+        }
+        window.addEventListener('resize', resizeCanvas); resizeCanvas();
+
+        function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+        function playSound(type) {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator(); const gainNode = audioCtx.createGain();
+            osc.connect(gainNode); gainNode.connect(audioCtx.destination);
+            const now = audioCtx.currentTime;
+            if (type === 'tick') {
+                osc.type = 'square'; osc.frequency.setValueAtTime(900, now);
+                gainNode.gain.setValueAtTime(0.2, now); gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+                osc.start(now); osc.stop(now + 0.1);
+            } else if (type === 'correct') {
+                osc.type = 'sine'; osc.frequency.setValueAtTime(600, now); osc.frequency.exponentialRampToValueAtTime(1200, now + 0.1);
+                gainNode.gain.setValueAtTime(0.5, now); gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                osc.start(now); osc.stop(now + 0.3);
+            } else if (type === 'wrong') {
+                osc.type = 'sawtooth'; osc.frequency.setValueAtTime(300, now); osc.frequency.exponentialRampToValueAtTime(150, now + 0.2);
+                gainNode.gain.setValueAtTime(0.5, now); gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                osc.start(now); osc.stop(now + 0.3);
+            }
+        }
+
+        const keyboardContainer = document.getElementById('keyboard');
+        const emojis = ['🐶', '🐱', '🐰', '🦊', '🐻', '🐼', '🐯', '🦁', '🐮', '🐷', '🐸', '🐵', '🦄', '🦖', '🚀'];
+        
+        emojis.forEach(e => {
+            const btn = document.createElement('div');
+            btn.className = 'ar-key h-20 md:h-24 text-5xl md:text-6xl shadow-xl';
+            btn.innerText = e; 
+            btn.dataset.key = e;
+            keyboardContainer.appendChild(btn);
+        });
+
+        function renderLeaderboard() {
+            document.getElementById('endCatTitle').innerText = `หมวด: ${categoryNames[selectedCategory-1]}`;
+            const list = document.getElementById('leaderboardList');
+            list.innerHTML = '<p class="text-gray-500 text-center mt-4">กำลังโหลดข้อมูลเรดาร์ (ออนไลน์)...</p>';
+
+            const scoresRef = database.ref('skyMathScores/category_' + selectedCategory);
+            scoresRef.orderByChild('score').limitToLast(10).once('value', (snapshot) => {
+                list.innerHTML = '';
+                if (!snapshot.exists()) {
+                    list.innerHTML = '<p class="text-gray-500 text-center mt-4">ยังไม่มีสถิติในหมวดนี้</p>';
+                    return;
+                }
+                
+                let records = [];
+                snapshot.forEach((childSnapshot) => {
+                    records.push(childSnapshot.val());
+                });
+                
+                records.reverse();
+
+                records.forEach((r, index) => {
+                    let badge = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '✈️';
+                    list.innerHTML += `
+                        <div class="bg-white/80 p-3 rounded-xl border border-blue-200 flex justify-between items-center mb-2 shadow-sm">
+                            <div class="text-blue-800 font-bold text-xl">${badge} ${r.name}</div>
+                            <div class="text-right">
+                                <span class="text-yellow-500 font-bold text-lg">${r.score}</span><br>
+                                <span class="text-green-500 text-sm">แม่น ${r.accuracy}%</span>
+                            </div>
+                        </div>`;
+                });
+            }, (error) => {
+                list.innerHTML = `<p class="text-red-500 text-center mt-4">เชื่อมต่อฐานข้อมูลล้มเหลว<br>โปรดตรวจสอบ Config Firebase</p>`;
+            });
+        }
+
+        function saveScoreOnline() {
+            let accuracy = totalAttempted === 0 ? 0 : Math.round((correctCount / totalAttempted) * 100);
+            const newRecord = { 
+                name: playerName || "นักบินลึกลับ", 
+                score: score, 
+                accuracy: accuracy, 
+                timestamp: firebase.database.ServerValue.TIMESTAMP
+            };
+            
+            const newScoreRef = database.ref('skyMathScores/category_' + selectedCategory).push();
+            newScoreRef.set(newRecord)
+                .then(() => { renderLeaderboard(); })
+                .catch((error) => { console.error("Error saving score: ", error); });
+        }
+
+        class Cloud {
+            constructor(text, isCorrect, color) {
+                this.radius = 70;
+                this.x = this.radius + Math.random() * (width - this.radius * 2);
+                this.y = this.radius + Math.random() * (height - this.radius * 2);
+                this.vx = (Math.random() - 0.5) * 5;
+                this.vy = (Math.random() - 0.5) * 5;
+                this.text = text; this.isCorrect = isCorrect; this.color = color;
+            }
+            update() {
+                this.x += this.vx; this.y += this.vy;
+                if (this.x - this.radius < 0 || this.x + this.radius > width) this.vx *= -1;
+                if (this.y - this.radius < 0 || this.y + this.radius > height) this.vy *= -1;
+            }
+            draw(ctx) {
+                ctx.shadowBlur = 10; ctx.shadowColor = this.color;
+                ctx.fillStyle = "#ffffff"; 
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius * 0.6, 0, Math.PI*2);
+                ctx.arc(this.x - this.radius*0.4, this.y + this.radius*0.1, this.radius*0.4, 0, Math.PI*2);
+                ctx.arc(this.x + this.radius*0.4, this.y + this.radius*0.1, this.radius*0.4, 0, Math.PI*2);
+                ctx.arc(this.x - this.radius*0.2, this.y - this.radius*0.3, this.radius*0.4, 0, Math.PI*2);
+                ctx.arc(this.x + this.radius*0.2, this.y - this.radius*0.3, this.radius*0.4, 0, Math.PI*2);
+                ctx.fill();
+                ctx.lineWidth = 4; ctx.strokeStyle = this.color; ctx.stroke();
+                
+                ctx.shadowBlur = 0; 
+                ctx.fillStyle = '#1e3a8a'; ctx.font = 'bold 36px Kanit';
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillText(this.text, this.x, this.y);
+            }
+        }
+
+        function generateQuestion() {
+            let qText = ""; let ans = 0; let w1 = 0; let w2 = 0;
+            switch(selectedCategory) {
+                case 1: 
+                    const base = Math.floor(Math.random() * 8) + 2; const power = Math.floor(Math.random() * 3) + 2;
+                    ans = Math.pow(base, power); qText = `${base} ^ ${power}`; 
+                    w1 = ans + Math.floor(Math.random() * 10) + 1; w2 = Math.max(1, ans - Math.floor(Math.random() * 10) - 1);
+                    break;
+                case 2: 
+                    const isAdd = Math.random() > 0.5;
+                    const d1 = (Math.random() * 10).toFixed(1); const d2 = (Math.random() * 10).toFixed(1);
+                    if (isAdd) { ans = (parseFloat(d1) + parseFloat(d2)).toFixed(1); qText = `${d1} + ${d2}`; } 
+                    else { let max = Math.max(d1, d2); let min = Math.min(d1, d2); ans = (max - min).toFixed(1); qText = `${max} - ${min}`; }
+                    w1 = (parseFloat(ans) + 1.2).toFixed(1); w2 = Math.max(0, (parseFloat(ans) - 0.5)).toFixed(1);
+                    break;
+                case 3: 
+                    const shapes = ['จัตุรัส', 'ผืนผ้า', 'สามเหลี่ยม']; const shape = shapes[Math.floor(Math.random() * shapes.length)];
+                    const val1 = Math.floor(Math.random() * 10) + 2; const val2 = Math.floor(Math.random() * 10) + 2;
+                    if (shape === 'จัตุรัส') { ans = val1 * val1; qText = `พื้นที่จัตุรัส ด้าน=${val1}`; }
+                    else if (shape === 'ผืนผ้า') { ans = val1 * val2; qText = `พื้นที่ผืนผ้า ${val1}x${val2}`; }
+                    else { let b = val1 * 2; ans = 0.5 * b * val2; qText = `พื้นที่∆ ฐาน=${b} สูง=${val2}`; }
+                    w1 = ans + Math.floor(Math.random() * 8) + 1; w2 = Math.max(1, ans - Math.floor(Math.random() * 5) - 1);
+                    break;
+                case 4: 
+                    const a = Math.floor(Math.random() * 4) + 2; const x = Math.floor(Math.random() * 10) + 1;
+                    const b_val = Math.floor(Math.random() * 10) + 1; const c = (a * x) + b_val;
+                    ans = x; qText = `${a}x + ${b_val} = ${c}, x=?`;
+                    w1 = ans + Math.floor(Math.random() * 3) + 1; w2 = Math.max(1, ans - Math.floor(Math.random() * 3) - 1);
+                    break;
+                case 5: 
+                    const percents = [10, 20, 25, 50, 75]; const p = percents[Math.floor(Math.random() * percents.length)];
+                    const total = (Math.floor(Math.random() * 10) + 2) * 10; 
+                    ans = (p / 100) * total; qText = `${p}% ของ ${total}`;
+                    w1 = ans + Math.floor(Math.random() * 10) + 1; w2 = Math.max(1, ans - Math.floor(Math.random() * 5) - 1);
+                    break;
+            }
+            if (w1 === w2) w1++;
+            correctAnswer = ans; currentQuestion = qText;
+            
+            let answers = [ { text: ans, isCorrect: true }, { text: w1, isCorrect: false }, { text: w2, isCorrect: false } ];
+            answers.sort(() => Math.random() - 0.5);
+            let shuffledColors = [...cloudColors].sort(() => Math.random() - 0.5);
+            clouds = [];
+            for (let i = 0; i < 3; i++) clouds.push(new Cloud(answers[i].text, answers[i].isCorrect, shuffledColors[i]));
+        }
+
+        function showNameInput() {
+            gameState = 'NAME_INPUT'; playerName = ""; 
+            document.getElementById('startScreen').classList.add('hidden'); document.getElementById('endScreen').classList.add('hidden'); 
+            document.getElementById('categoryScreen').classList.add('hidden');
+            document.getElementById('nameInputScreen').classList.remove('hidden');
+        }
+
+        function showCategorySelect() {
+            gameState = 'CATEGORY_SELECT';
+            navCooldown = 60; 
+            document.getElementById('nameInputScreen').classList.add('hidden');
+            document.getElementById('endScreen').classList.add('hidden');
+            document.getElementById('categoryScreen').classList.remove('hidden');
+        }
+
+        function startGame(catIndex) {
+            selectedCategory = parseInt(catIndex);
+            gameState = 'PLAYING';
+            score = 0; correctCount = 0; totalAttempted = 0; timeLeft = 120;
+            document.getElementById('hudName').innerText = playerName || "นักบิน";
+            document.getElementById('scoreValue').innerText = score;
+            document.getElementById('currentCatDisplay').innerText = `ภารกิจ: ${categoryNames[selectedCategory-1]}`;
+            document.getElementById('categoryScreen').classList.add('hidden'); 
+            document.getElementById('hud').classList.remove('hidden');
+            
+            generateQuestion(); 
+            
+            if (timerInterval !== null) { clearInterval(timerInterval); }
+            
+            timerInterval = setInterval(() => {
+                timeLeft--;
+                let m = Math.floor(timeLeft / 60); let s = timeLeft % 60;
+                document.getElementById('timerValue').innerText = `${m}:${s < 10 ? '0' : ''}${s}`;
+                if (timeLeft <= 0) endGame();
+            }, 1000);
+        }
+
+        function endGame() {
+            gameState = 'END'; 
+            if (timerInterval !== null) { clearInterval(timerInterval); timerInterval = null; }
+            document.getElementById('hud').classList.add('hidden'); document.getElementById('endScreen').classList.remove('hidden');
+            
+            saveScoreOnline(); 
+            
+            let accuracy = totalAttempted === 0 ? 0 : Math.round((correctCount / totalAttempted) * 100);
+            document.getElementById('finalName').innerText = playerName;
+            document.getElementById('finalScore').innerText = score;
+            document.getElementById('accuracyValue').innerText = `${accuracy}%`;
+
+            const resStatus = document.getElementById('resultStatus');
+            if (accuracy >= 70 && totalAttempted > 0) { resStatus.innerText = "🎉 ยอดเยี่ยม! ภารกิจสำเร็จ"; resStatus.className = "text-4xl font-bold my-4 text-green-500"; } 
+            else { resStatus.innerText = "❌ พยายามใหม่อีกนิดนะ!"; resStatus.className = "text-4xl font-bold my-4 text-red-500"; }
+        }
+
+        function isHoveringDOM(cursorX, cursorY, element) {
+            const rect = element.getBoundingClientRect(); const wrapperRect = gameWrapper.getBoundingClientRect();
+            const globalCursorX = wrapperRect.left + cursorX; const globalCursorY = wrapperRect.top + cursorY;
+            return (globalCursorX >= rect.left && globalCursorX <= rect.right && globalCursorY >= rect.top && globalCursorY <= rect.bottom);
+        }
+
+        function drawHandSkeleton(ctx, landmarks) {
+            ctx.save();
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.8)"; 
+            ctx.lineWidth = 3; ctx.shadowBlur = 5; ctx.shadowColor = "#3b82f6"; 
+            const connections = [ [0,1],[1,2],[2,3],[3,4], [0,5],[5,6],[6,7],[7,8], [5,9],[9,10],[10,11],[11,12], [9,13],[13,14],[14,15],[15,16], [13,17],[17,18],[18,19],[19,20], [0,17], [5,9], [9,13], [13,17] ];
+
+            ctx.beginPath();
+            for (let i = 0; i < connections.length; i++) {
+                const startPoint = landmarks[connections[i][0]]; const endPoint = landmarks[connections[i][1]];
+                ctx.moveTo((1 - startPoint.x) * width, startPoint.y * height); ctx.lineTo((1 - endPoint.x) * width, endPoint.y * height);
+            }
+            ctx.stroke();
+
+            for (let i = 0; i < landmarks.length; i++) {
+                const x = (1 - landmarks[i].x) * width; const y = landmarks[i].y * height;
+                ctx.shadowBlur = 4; ctx.shadowColor = "#00ffff"; 
+                ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fillStyle = "#00ffff"; ctx.fill();
+                ctx.shadowBlur = 0; ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2); ctx.fillStyle = "#ffffff"; ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        function drawCursor(ctx, x, y) {
+            ctx.save(); ctx.translate(x, y);
+            
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.9)"; ctx.lineWidth = 5;
+            ctx.beginPath(); 
+            ctx.moveTo(-40, 0); ctx.lineTo(-18, 0); 
+            ctx.moveTo(18, 0); ctx.lineTo(40, 0); 
+            ctx.moveTo(0, -40); ctx.lineTo(0, -18); 
+            ctx.moveTo(0, 18); ctx.lineTo(0, 40); 
+            ctx.stroke();
+
+            const coreColor = isPinching ? "#00ff00" : "#ff0000";
+            ctx.shadowBlur = 20; ctx.shadowColor = coreColor;
+            
+            ctx.beginPath(); ctx.arc(0, 0, isPinching ? 15 : 25, 0, Math.PI * 2);
+            ctx.fillStyle = coreColor; ctx.fill();
+            ctx.lineWidth = 4; ctx.strokeStyle = '#fff'; ctx.stroke();
+            
+            ctx.restore();
+        }
+
+        function gameLoop() {
+            canvasCtx.clearRect(0, 0, width, height);
+            cursorX += (targetCursorX - cursorX) * 0.4; cursorY += (targetCursorY - cursorY) * 0.4;
+            let currentHover = null;
+            
+            if (pinchCooldown > 0) pinchCooldown--;
+            if (navCooldown > 0) navCooldown--; 
+
+            let justPinched = isPinching && !wasPinching && (pinchCooldown === 0);
+
+            if (windowLandmarks && targetCursorX !== -100 && gameState === 'NAME_INPUT') {
+                drawHandSkeleton(canvasCtx, windowLandmarks); 
+            }
+
+            if (gameState === 'NAME_INPUT') {
+                if (targetCursorX !== -100) {
+                    const domKeys = document.querySelectorAll('.ar-key');
+                    domKeys.forEach(key => key.classList.remove('active'));
+                    for (let key of domKeys) { if (isHoveringDOM(cursorX, cursorY, key)) { currentHover = key; key.classList.add('active'); break; } }
+                }
+
+                if (currentHover && justPinched) {
+                    playSound('tick'); pinchCooldown = 30; 
+                    currentHover.classList.add('pressed'); setTimeout(() => currentHover.classList.remove('pressed'), 150);
+
+                    playerName = "นักบิน " + currentHover.dataset.key;
+                    
+                    setTimeout(() => {
+                        showCategorySelect();
+                        currentHover = null;
+                    }, 400);
+                }
+            }
+            
+            else if (gameState === 'CATEGORY_SELECT') {
+                if (targetCursorX !== -100) {
+                    const btns = document.querySelectorAll('.cat-btn');
+                    btns.forEach(btn => btn.classList.remove('active'));
+                    for (let btn of btns) { if (isHoveringDOM(cursorX, cursorY, btn)) { currentHover = btn; btn.classList.add('active'); break; } }
+                }
+                
+                if (currentHover && navCooldown === 0) {
+                    if (hoverTarget === currentHover) {
+                        hoverFrames++;
+                        canvasCtx.beginPath(); canvasCtx.arc(cursorX, cursorY, 65, -Math.PI/2, -Math.PI/2 + (hoverFrames/requiredHoverFrames)*Math.PI*2);
+                        canvasCtx.strokeStyle = '#3b82f6'; canvasCtx.lineWidth = 8; canvasCtx.stroke();
+                        
+                        if (hoverFrames >= requiredHoverFrames) {
+                            playSound('tick'); startGame(currentHover.dataset.cat); hoverTarget = null; hoverFrames = 0; currentHover = null;
+                        }
+                    } else { hoverTarget = currentHover; hoverFrames = 0; }
+                } else { hoverTarget = null; hoverFrames = 0; }
+            }
+            
+            else if (gameState === 'PLAYING') {
+                // ==========================================
+                // ปรับขนาดตัวอักษรของโจทย์ให้ใหญ่ขึ้น (จาก 80px เป็น 120px)
+                // ==========================================
+                canvasCtx.fillStyle = '#ffffff'; canvasCtx.strokeStyle = '#1e3a8a'; 
+                canvasCtx.lineWidth = 12; // ปรับเส้นขอบให้หนาขึ้นตามขนาดตัวอักษร
+                canvasCtx.font = 'bold 120px Kanit';
+                canvasCtx.textAlign = 'center'; canvasCtx.textBaseline = 'middle';
+                canvasCtx.strokeText(currentQuestion, width / 2, height / 2); 
+                canvasCtx.fillText(currentQuestion, width / 2, height / 2);
+
+                clouds.forEach(cloud => { cloud.update(); cloud.draw(canvasCtx); });
+
+                if (targetCursorX !== -100) {
+                    for (let cloud of clouds) {
+                        const dx = cursorX - cloud.x; const dy = cursorY - cloud.y;
+                        if (Math.sqrt(dx*dx + dy*dy) < cloud.radius + cursorRadius) { currentHover = cloud; break; }
+                    }
+                }
+                
+                if (currentHover) {
+                    if (hoverTarget === currentHover) {
+                        hoverFrames++;
+                        canvasCtx.beginPath(); canvasCtx.arc(cursorX, cursorY, 75, -Math.PI/2, -Math.PI/2 + (hoverFrames/requiredHoverFrames)*Math.PI*2);
+                        canvasCtx.strokeStyle = '#fff'; canvasCtx.lineWidth = 8; canvasCtx.stroke();
+                        
+                        if (hoverFrames >= requiredHoverFrames) {
+                            totalAttempted++;
+                            if (currentHover.isCorrect) { playSound('correct'); score += 10; correctCount++; }
+                            else { playSound('wrong'); score = Math.max(0, score - 5); }
+                            document.getElementById('scoreValue').innerText = score;
+                            generateQuestion(); hoverTarget = null; hoverFrames = 0; currentHover = null;
+                        }
+                    } else { hoverTarget = currentHover; hoverFrames = 0; }
+                } else { hoverTarget = null; hoverFrames = 0; }
+            }
+
+            else if (gameState === 'END') {
+                if (targetCursorX !== -100) {
+                    const restartBtn = document.getElementById('arRestartBtn');
+                    if (isHoveringDOM(cursorX, cursorY, restartBtn)) {
+                        currentHover = restartBtn; restartBtn.classList.add('scale-105', 'border-yellow-400');
+                    } else {
+                        restartBtn.classList.remove('scale-105', 'border-yellow-400');
+                        const list = document.getElementById('leaderboardList');
+                        if (isHoveringDOM(cursorX, cursorY, list)) {
+                            const listRect = list.getBoundingClientRect();
+                            const relativeY = (gameWrapper.getBoundingClientRect().top + cursorY) - listRect.top;
+                            const scrollPercentage = relativeY / listRect.height;
+                            list.scrollTo({ top: scrollPercentage * (list.scrollHeight - list.clientHeight), behavior: 'smooth' });
+                        }
+                    }
+                }
+                if (currentHover === document.getElementById('arRestartBtn')) {
+                    if (hoverTarget === currentHover) {
+                        hoverFrames++;
+                        canvasCtx.beginPath(); canvasCtx.arc(cursorX, cursorY, 65, -Math.PI/2, -Math.PI/2 + (hoverFrames/requiredHoverFrames)*Math.PI*2);
+                        canvasCtx.strokeStyle = '#3b82f6'; canvasCtx.lineWidth = 8; canvasCtx.stroke();
+                        if (hoverFrames >= requiredHoverFrames) {
+                            playSound('tick'); showCategorySelect(); hoverTarget = null; hoverFrames = 0; currentHover = null;
+                        }
+                    } else { hoverTarget = currentHover; hoverFrames = 0; }
+                } else { hoverTarget = null; hoverFrames = 0; }
+            }
+
+            if (targetCursorX !== -100 && gameState !== 'START') {
+                drawCursor(canvasCtx, cursorX, cursorY);
+            }
+
+            wasPinching = isPinching;
+            requestAnimationFrame(gameLoop);
+        }
+
+        const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        
+        hands.onResults((results) => {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                windowLandmarks = landmarks; 
+                
+                const indexTip = landmarks[8]; const thumbTip = landmarks[4];
+                targetCursorX = (1 - indexTip.x) * width; targetCursorY = indexTip.y * height;
+
+                const dx = indexTip.x - thumbTip.x; const dy = indexTip.y - thumbTip.y;
+                isPinching = Math.sqrt(dx * dx + dy * dy) < 0.05;
+            } else { 
+                targetCursorX = -100; targetCursorY = -100; hoverFrames = 0; windowLandmarks = null; isPinching = false;
+            }
+        });
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 1280, height: 720
+        });
+
+        document.getElementById('startBtn').addEventListener('click', async () => {
+            document.getElementById('startBtn').classList.add('hidden');
+            document.getElementById('loadingText').classList.remove('hidden');
+            initAudio(); 
+            try { await camera.start(); showNameInput(); gameLoop(); } 
+            catch (error) { alert("ไม่สามารถเข้าถึงกล้องได้"); }
+        });
+    </script>
+</body>
+</html>
